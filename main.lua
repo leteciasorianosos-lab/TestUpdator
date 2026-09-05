@@ -3557,17 +3557,20 @@ end
 
 
 require "import"
+import "android.app.*"
+import "android.os.*"
 import "android.widget.*"
 import "android.view.*"
-import "android.os.*"
+import "android.graphics.*"
+import "android.graphics.drawable.GradientDrawable"
 import "java.io.*"
 import "java.net.*"
 import "android.app.ProgressDialog"
 import "android.content.DialogInterface"
-import "android.app.AlertDialog"
+import "android.content.Context"
 
 -- ============================================================
--- YOUR GITHUB CONFIG
+-- CONFIGURATION
 -- ============================================================
 local GITHUB_USER = "leteciasorianosos-lab"
 local GITHUB_REPO = "TestUpdator"
@@ -3575,108 +3578,273 @@ local GITHUB_BRANCH = "main"
 
 local RAW_URL = "https://raw.githubusercontent.com/" .. GITHUB_USER .. "/" .. GITHUB_REPO .. "/" .. GITHUB_BRANCH .. "/"
 
-local CURRENT_VERSION = "1.0.0"  -- Change this when you update
+local CURRENT_VERSION = "1.0.0"
+local UPDATE_AVAILABLE = false
+local NEW_VERSION = ""
 
 -- ============================================================
--- CHECK FOR UPDATE
+-- UI COLORS
 -- ============================================================
-function checkForUpdate()
-    local versionUrl = RAW_URL .. "version.txt"
-    local mainUrl = RAW_URL .. "main.lua"
-    
-    -- Show checking dialog
-    local progressDialog = ProgressDialog(activity)
-    progressDialog.setTitle("🔄 Checking for Update")
-    progressDialog.setMessage("Connecting to GitHub...")
-    progressDialog.setProgressStyle(ProgressDialog.STYLE_SPINNER)
-    progressDialog.setCancelable(false)
-    progressDialog.show()
-    
-    thread(function()
-        local success, err = pcall(function()
-            -- Download version.txt
-            local url = URL(versionUrl)
-            local conn = url.openConnection()
-            conn.setConnectTimeout(15000)
-            conn.setReadTimeout(15000)
+local COLORS = {
+    BG = "#0A0A0A",
+    CARD = "#1A1A1A",
+    PRIMARY = "#00FFAA",
+    SECONDARY = "#00DD88",
+    TEXT = "#FFFFFF",
+    TEXT_DIM = "#888888",
+    ERROR = "#FF4444",
+    SUCCESS = "#00FF88",
+    WARNING = "#FFAA00"
+}
+
+-- ============================================================
+-- UI FUNCTIONS
+-- ============================================================
+function getShape(colorHex, radius, strokeWidth, strokeColorHex)
+    local gd = GradientDrawable()
+    gd.setColor(Color.parseColor(colorHex))
+    gd.setCornerRadius(radius)
+    if strokeWidth and strokeColorHex then
+        gd.setStroke(strokeWidth, Color.parseColor(strokeColorHex))
+    end
+    return gd
+end
+
+function StyleButton(btn, bgColor, textColor, radius)
+    btn.setTextColor(Color.parseColor(textColor or "#FFFFFF"))
+    btn.setAllCaps(false)
+    btn.setTextSize(15)
+    btn.setTypeface(nil, Typeface.BOLD)
+    local bg = GradientDrawable()
+    bg.setCornerRadius(radius or 25)
+    bg.setColor(Color.parseColor(bgColor))
+    btn.setBackground(bg)
+    btn.setPadding(30,18,30,18)
+end
+
+-- ============================================================
+-- MAIN UPDATE UI
+-- ============================================================
+function showUpdateUI()
+    local layout = LinearLayout(activity)
+    layout.setOrientation(LinearLayout.VERTICAL)
+    layout.setGravity(Gravity.CENTER)
+    layout.setBackgroundColor(Color.parseColor(COLORS.BG))
+    layout.setPadding(30,40,30,40)
+
+    -- Header
+    local header = TextView(activity)
+    header.setText("🔄 UPDATE CENTER")
+    header.setTextColor(Color.parseColor(COLORS.PRIMARY))
+    header.setTextSize(24)
+    header.setTypeface(nil, Typeface.BOLD)
+    header.setGravity(Gravity.CENTER)
+    header.setPadding(0,0,0,20)
+    layout.addView(header)
+
+    -- Card
+    local card = LinearLayout(activity)
+    card.setOrientation(LinearLayout.VERTICAL)
+    card.setPadding(30,25,30,25)
+    card.setBackground(getShape(COLORS.CARD, 20, 2, COLORS.PRIMARY))
+    card.setGravity(Gravity.CENTER_HORIZONTAL)
+
+    -- Version Info
+    local versionLabel = TextView(activity)
+    versionLabel.setText("📱 CURRENT VERSION")
+    versionLabel.setTextColor(Color.parseColor(COLORS.TEXT_DIM))
+    versionLabel.setTextSize(12)
+    versionLabel.setTypeface(nil, Typeface.BOLD)
+    card.addView(versionLabel)
+
+    local currentVer = TextView(activity)
+    currentVer.setText(CURRENT_VERSION)
+    currentVer.setTextColor(Color.parseColor(COLORS.TEXT))
+    currentVer.setTextSize(22)
+    currentVer.setTypeface(nil, Typeface.BOLD)
+    card.addView(currentVer)
+
+    -- Divider
+    local divider = View(activity)
+    divider.setLayoutParams(LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2))
+    divider.setBackgroundColor(Color.parseColor("#333333"))
+    divider.setPadding(0,15,0,15)
+    card.addView(divider)
+
+    -- Latest Version
+    local latestLabel = TextView(activity)
+    latestLabel.setText("📦 LATEST VERSION")
+    latestLabel.setTextColor(Color.parseColor(COLORS.TEXT_DIM))
+    latestLabel.setTextSize(12)
+    latestLabel.setTypeface(nil, Typeface.BOLD)
+    card.addView(latestLabel)
+
+    local latestVer = TextView(activity)
+    latestVer.setText("Checking...")
+    latestVer.setTextColor(Color.parseColor(COLORS.WARNING))
+    latestVer.setTextSize(22)
+    latestVer.setTypeface(nil, Typeface.BOLD)
+    card.addView(latestVer)
+
+    -- Status
+    local statusText = TextView(activity)
+    statusText.setText("⏳ Checking for updates...")
+    statusText.setTextColor(Color.parseColor(COLORS.TEXT_DIM))
+    statusText.setTextSize(14)
+    statusText.setPadding(0,15,0,0)
+    card.addView(statusText)
+
+    layout.addView(card)
+
+    -- Buttons
+    local btnLayout = LinearLayout(activity)
+    btnLayout.setOrientation(LinearLayout.VERTICAL)
+    btnLayout.setGravity(Gravity.CENTER)
+    btnLayout.setPadding(0,25,0,0)
+
+    local checkBtn = Button(activity)
+    checkBtn.setText("🔍 CHECK FOR UPDATE")
+    StyleButton(checkBtn, COLORS.PRIMARY, "#0A0A0A", 30)
+    checkBtn.setLayoutParams(LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    btnLayout.addView(checkBtn)
+
+    local updateBtn = Button(activity)
+    updateBtn.setText("⬇️ DOWNLOAD UPDATE")
+    StyleButton(updateBtn, COLORS.SECONDARY, "#0A0A0A", 30)
+    updateBtn.setLayoutParams(LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    updateBtn.setEnabled(false)
+    updateBtn.setAlpha(0.5)
+    btnLayout.addView(updateBtn)
+
+    local closeBtn = Button(activity)
+    closeBtn.setText("❌ CLOSE")
+    StyleButton(closeBtn, "#333333", "#FFFFFF", 30)
+    closeBtn.setLayoutParams(LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    btnLayout.addView(closeBtn)
+
+    layout.addView(btnLayout)
+
+    activity.setContentView(layout)
+
+    -- ============================================================
+    -- BUTTON EVENTS
+    -- ============================================================
+
+    checkBtn.setOnClickListener(View.OnClickListener{
+        onClick=function()
+            checkBtn.setEnabled(false)
+            checkBtn.setText("⏳ CHECKING...")
+            statusText.setText("⏳ Checking for updates...")
+            statusText.setTextColor(Color.parseColor(COLORS.WARNING))
+            latestVer.setText("Checking...")
+            latestVer.setTextColor(Color.parseColor(COLORS.WARNING))
             
-            local input = BufferedReader(InputStreamReader(conn.getInputStream()))
-            local latestVersion = input.readLine()
-            input.close()
-            
-            print("📱 Current Version: " .. CURRENT_VERSION)
-            print("📱 Latest Version: " .. tostring(latestVersion))
-            
-            if latestVersion and latestVersion ~= "" then
-                latestVersion = latestVersion:gsub("%s+", "") -- Remove spaces
-                
-                if latestVersion ~= CURRENT_VERSION then
-                    -- New version available
-                    activity.runOnUiThread(function()
-                        progressDialog.dismiss()
-                        showUpdateDialog(latestVersion, mainUrl)
-                    end)
-                else
-                    -- Already up to date
-                    activity.runOnUiThread(function()
-                        progressDialog.dismiss()
-                        Toast.makeText(activity, "✅ App is up to date! (v" .. CURRENT_VERSION .. ")", Toast.LENGTH_SHORT).show()
-                    end)
-                end
-            else
-                activity.runOnUiThread(function()
-                    progressDialog.dismiss()
-                    Toast.makeText(activity, "⚠️ Could not get version info", Toast.LENGTH_SHORT).show()
-                end)
-            end
-        end)
-        
-        if not success then
-            activity.runOnUiThread(function()
-                progressDialog.dismiss()
-                Toast.makeText(activity, "❌ Update check failed: " .. tostring(err), Toast.LENGTH_LONG).show()
+            thread(function()
+                checkForUpdate(latestVer, statusText, updateBtn, checkBtn)
             end)
         end
+    })
+
+    updateBtn.setOnClickListener(View.OnClickListener{
+        onClick=function()
+            if UPDATE_AVAILABLE then
+                downloadAndApplyUpdate(updateBtn, statusText)
+            end
+        end
+    })
+
+    closeBtn.setOnClickListener(View.OnClickListener{
+        onClick=function()
+            activity.finish()
+        end
+    })
+
+    -- Auto-check on start
+    thread(function()
+        System.sleep(500)
+        activity.runOnUiThread(function()
+            checkBtn.performClick()
+        end)
     end)
 end
 
 -- ============================================================
--- SHOW UPDATE DIALOG
+-- CHECK FOR UPDATE
 -- ============================================================
-function showUpdateDialog(newVersion, downloadUrl)
-    local builder = AlertDialog.Builder(activity)
-    builder.setTitle("🔄 Update Available!")
-    builder.setMessage(
-        "📱 New Version: " .. newVersion .. 
-        "\n📱 Current Version: " .. CURRENT_VERSION .. 
-        "\n\nWhat's new?\n" ..
-        "• Bug fixes\n" ..
-        "• Performance improvements\n" ..
-        "• New features\n\n" ..
-        "Do you want to update now?"
-    )
-    builder.setIcon(android.R.drawable.ic_dialog_info)
+function checkForUpdate(latestVer, statusText, updateBtn, checkBtn)
+    local versionUrl = RAW_URL .. "version.txt"
     
-    builder.setPositiveButton("✅ UPDATE NOW", function()
-        downloadAndApplyUpdate(downloadUrl)
+    local success, err = pcall(function()
+        local url = URL(versionUrl)
+        local conn = url.openConnection()
+        conn.setConnectTimeout(15000)
+        conn.setReadTimeout(15000)
+        
+        local input = BufferedReader(InputStreamReader(conn.getInputStream()))
+        local latestVersion = input.readLine()
+        input.close()
+        
+        if latestVersion then
+            latestVersion = latestVersion:gsub("%s+", "")
+            NEW_VERSION = latestVersion
+            
+            activity.runOnUiThread(function()
+                latestVer.setText(latestVersion)
+                
+                if latestVersion ~= CURRENT_VERSION then
+                    UPDATE_AVAILABLE = true
+                    latestVer.setTextColor(Color.parseColor(COLORS.SUCCESS))
+                    statusText.setText("✅ New version available!")
+                    statusText.setTextColor(Color.parseColor(COLORS.SUCCESS))
+                    updateBtn.setEnabled(true)
+                    updateBtn.setAlpha(1.0)
+                    updateBtn.setText("⬇️ DOWNLOAD v" .. latestVersion)
+                else
+                    UPDATE_AVAILABLE = false
+                    latestVer.setTextColor(Color.parseColor(COLORS.TEXT))
+                    statusText.setText("✅ App is up to date!")
+                    statusText.setTextColor(Color.parseColor(COLORS.SUCCESS))
+                    updateBtn.setEnabled(false)
+                    updateBtn.setAlpha(0.5)
+                    updateBtn.setText("⬇️ UP TO DATE")
+                end
+                
+                checkBtn.setEnabled(true)
+                checkBtn.setText("🔍 CHECK AGAIN")
+            end)
+        else
+            activity.runOnUiThread(function()
+                statusText.setText("❌ Could not get version info")
+                statusText.setTextColor(Color.parseColor(COLORS.ERROR))
+                checkBtn.setEnabled(true)
+                checkBtn.setText("🔍 RETRY")
+            end)
+        end
     end)
     
-    builder.setNegativeButton("⏰ LATER", function()
-        Toast.makeText(activity, "Update cancelled. You can update later.", Toast.LENGTH_SHORT).show()
-    end)
-    
-    builder.setNeutralButton("⏭ SKIP VERSION", function()
-        prefs.edit().putString("skip_version", newVersion).apply()
-        Toast.makeText(activity, "Update skipped for version " .. newVersion, Toast.LENGTH_SHORT).show()
-    end)
-    
-    builder.show()
+    if not success then
+        activity.runOnUiThread(function()
+            statusText.setText("❌ Connection failed: " .. tostring(err))
+            statusText.setTextColor(Color.parseColor(COLORS.ERROR))
+            latestVer.setText("Error")
+            latestVer.setTextColor(Color.parseColor(COLORS.ERROR))
+            checkBtn.setEnabled(true)
+            checkBtn.setText("🔍 RETRY")
+        end)
+    end
 end
 
 -- ============================================================
 -- DOWNLOAD AND APPLY UPDATE
 -- ============================================================
-function downloadAndApplyUpdate(downloadUrl)
+function downloadAndApplyUpdate(updateBtn, statusText)
+    local mainUrl = RAW_URL .. "main.lua"
+    
+    updateBtn.setEnabled(false)
+    updateBtn.setText("⏳ DOWNLOADING...")
+    statusText.setText("⏳ Downloading update...")
+    statusText.setTextColor(Color.parseColor(COLORS.WARNING))
+    
     -- Show progress dialog
     local progressDialog = ProgressDialog(activity)
     progressDialog.setTitle("⬇️ Downloading Update")
@@ -3688,8 +3856,7 @@ function downloadAndApplyUpdate(downloadUrl)
     
     thread(function()
         local success, err = pcall(function()
-            -- Download new main.lua
-            local url = URL(downloadUrl)
+            local url = URL(mainUrl)
             local conn = url.openConnection()
             conn.setConnectTimeout(30000)
             conn.setReadTimeout(30000)
@@ -3697,7 +3864,6 @@ function downloadAndApplyUpdate(downloadUrl)
             local totalSize = conn.getContentLength()
             local input = BufferedInputStream(conn.getInputStream())
             
-            -- Save to cache
             local cacheDir = activity.getCacheDir()
             local tempFile = File(cacheDir, "main_new.lua")
             local output = FileOutputStream(tempFile)
@@ -3725,153 +3891,48 @@ function downloadAndApplyUpdate(downloadUrl)
             output.close()
             
             activity.runOnUiThread(function()
-                progressDialog.setMessage("📦 Applying update...")
-            end)
-            
-            -- Read new file
-            local newScript = ""
-            local f = io.open(tempFile.getAbsolutePath(), "r")
-            if f then
-                newScript = f:read("*a")
-                f:close()
-            end
-            
-            if newScript ~= "" and #newScript > 100 then
-                -- Save new version
-                prefs.edit().putString("current_version", CURRENT_VERSION).apply()
+                progressDialog.dismiss()
                 
-                -- Apply update
-                activity.runOnUiThread(function()
-                    progressDialog.dismiss()
-                    
-                    -- Show success message
-                    AlertDialog.Builder(activity)
-                        .setTitle("✅ Update Complete!")
-                        .setMessage(
-                            "App has been updated successfully!\n\n" ..
-                            "📱 New Version: " .. CURRENT_VERSION .. "\n" ..
-                            "📦 Size: " .. string.format("%.2f", downloaded/1024) .. " KB\n\n" ..
-                            "Please restart the app to apply changes."
-                        )
-                        .setPositiveButton("🔄 RESTART NOW", function()
-                            -- Restart the app
-                            local intent = activity.getPackageManager().getLaunchIntentForPackage(activity.getPackageName())
-                            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                            activity.startActivity(intent)
-                            activity.finish()
-                            os.exit()
-                        end)
-                        .setNegativeButton("⏰ LATER", function()
-                            Toast.makeText(activity, "Please restart app to apply changes.", Toast.LENGTH_LONG).show()
-                        end)
-                        .show()
-                end)
-            else
-                activity.runOnUiThread(function()
-                    progressDialog.dismiss()
-                    Toast.makeText(activity, "❌ Update failed: File is empty or corrupted", Toast.LENGTH_SHORT).show()
-                end)
-            end
+                -- Show success dialog
+                AlertDialog.Builder(activity)
+                    .setTitle("✅ Update Downloaded!")
+                    .setMessage(
+                        "New version has been downloaded!\n\n" ..
+                        "Size: " .. string.format("%.2f", downloaded/1024) .. " KB\n" ..
+                        "Version: " .. NEW_VERSION .. "\n\n" ..
+                        "Restart app to apply update."
+                    )
+                    .setPositiveButton("🔄 RESTART NOW", function()
+                        local intent = activity.getPackageManager().getLaunchIntentForPackage(activity.getPackageName())
+                        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        activity.startActivity(intent)
+                        activity.finish()
+                        os.exit()
+                    end)
+                    .setNegativeButton("⏰ LATER", function()
+                        statusText.setText("✅ Update downloaded! Restart to apply.")
+                        statusText.setTextColor(Color.parseColor(COLORS.SUCCESS))
+                        updateBtn.setText("✅ DOWNLOADED")
+                        updateBtn.setEnabled(false)
+                        updateBtn.setAlpha(0.5)
+                    end)
+                    .show()
+            end)
         end)
         
         if not success then
             activity.runOnUiThread(function()
                 progressDialog.dismiss()
-                Toast.makeText(activity, "❌ Update failed: " .. tostring(err), Toast.LENGTH_LONG).show()
+                statusText.setText("❌ Download failed: " .. tostring(err))
+                statusText.setTextColor(Color.parseColor(COLORS.ERROR))
+                updateBtn.setEnabled(true)
+                updateBtn.setText("⬇️ RETRY DOWNLOAD")
             end)
         end
     end)
 end
 
 -- ============================================================
--- CHECK UPDATE ON STARTUP
+-- LAUNCH UPDATE UI
 -- ============================================================
-function checkUpdateOnStartup()
-    -- Check if user skipped this version
-    local skipVersion = prefs.getString("skip_version", "")
-    local latestVersion = ""
-    
-    -- Get latest version from GitHub
-    pcall(function()
-        local url = URL(RAW_URL .. "version.txt")
-        local conn = url.openConnection()
-        conn.setConnectTimeout(5000)
-        conn.setReadTimeout(5000)
-        local input = BufferedReader(InputStreamReader(conn.getInputStream()))
-        latestVersion = input.readLine()
-        if latestVersion then
-            latestVersion = latestVersion:gsub("%s+", "")
-        end
-        input.close()
-    end)
-    
-    if latestVersion and latestVersion ~= "" and latestVersion ~= skipVersion then
-        Handler().postDelayed(Runnable{run = function()
-            checkForUpdate()
-        end}, 3000)
-    end
-end
-
--- ============================================================
--- FORCE UPDATE (Bypass version check)
--- ============================================================
-function forceUpdate()
-    local mainUrl = RAW_URL .. "main.lua"
-    downloadAndApplyUpdate(mainUrl)
-end
-
--- ============================================================
--- ADD UPDATE BUTTON TO YOUR LAYOUT
--- ============================================================
-function createUpdateButton()
-    local btn = Button(activity)
-    btn.setText("🔄 CHECK UPDATE")
-    btn.setTextColor(Color.parseColor("#00FFAA"))
-    btn.setBackgroundColor(Color.parseColor("#1A1A1A"))
-    btn.setPadding(20,15,20,15)
-    btn.setOnClickListener(View.OnClickListener{
-        onClick=function()
-            checkForUpdate()
-        end
-    })
-    return btn
-end
-
--- ============================================================
--- TEST FUNCTION (Check if GitHub files are accessible)
--- ============================================================
-function testGitHubConnection()
-    Toast.makeText(activity, "🔍 Testing GitHub connection...", Toast.LENGTH_SHORT).show()
-    
-    thread(function()
-        local success, err = pcall(function()
-            local url = URL(RAW_URL .. "version.txt")
-            local conn = url.openConnection()
-            conn.setConnectTimeout(10000)
-            conn.setReadTimeout(10000)
-            local input = BufferedReader(InputStreamReader(conn.getInputStream()))
-            local line = input.readLine()
-            input.close()
-            
-            if line then
-                activity.runOnUiThread(function()
-                    Toast.makeText(activity, "✅ GitHub connected! Version: " .. line, Toast.LENGTH_LONG).show()
-                end)
-            end
-        end)
-        
-        if not success then
-            activity.runOnUiThread(function()
-                Toast.makeText(activity, "❌ GitHub connection failed: " .. tostring(err), Toast.LENGTH_LONG).show()
-            end)
-        end
-    end)
-end
-
--- ============================================================
--- CALL THIS ON APP STARTUP
--- ============================================================
--- Check for update on startup (uncomment if you want auto-check)
--- Handler().postDelayed(Runnable{run = function()
---     checkUpdateOnStartup()
--- end}, 5000)
+showUpdateUI()
