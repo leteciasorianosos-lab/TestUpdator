@@ -2620,7 +2620,7 @@ wall.ButtonDrawable.setColorFilter(PorterDuffColorFilter(0xFF16C3D4, PorterDuff.
 function wall.OnCheckedChangeListener()
   if wall.checked then
     HexPatches.MemoryPatch("libunity.so", 0x548A67C, "h1F 20 03 D5 E0 03 13 AA", 32); -- //  UPDATED 0x51EC52C -> 0xA1072CC
-    idkcstmToast("ᴡᴀʟʟʜᴀᴄᴋ ʏ/ʙ ✔️")
+    idkcstmToast("ᴡᴀʟʟʜᴀᴄᴋ ʏ/b ✔️")
   end
 end
 
